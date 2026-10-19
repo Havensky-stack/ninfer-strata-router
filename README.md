@@ -1,5 +1,8 @@
 # ninfer-strata 本地路由方案
 
+[![ci](https://github.com/Havensky-stack/ninfer-strata-router/actions/workflows/ci.yml/badge.svg)](https://github.com/Havensky-stack/ninfer-strata-router/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **一个接口,两个本地大模型,用哪个就加载哪个。**
 
 `ninfer-strata-router` 是一个单文件、只依赖 Python 标准库的反向代理。它把**两个各自需要独占
