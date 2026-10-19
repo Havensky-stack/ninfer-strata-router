@@ -1,0 +1,42 @@
+{
+  "listen": { "host": "127.0.0.1", "port": 8090 },
+  "default_model": "strata",
+  "auth": {
+    "keys": ["replace-with-a-long-random-key", "replace-with-a-second-admin-key"],
+    "admin_keys": ["replace-with-a-second-admin-key"],
+    "admin_only_paths": ["/router/load", "/router/unload", "/router/metrics"],
+    "exempt_paths": ["/health", "/router/health"]
+  },
+  "limits": {
+    "max_body_bytes": 33554432,
+    "max_inflight": 16,
+    "rate_limit": { "requests_per_minute": 60, "burst": 10 }
+  },
+  "switch": { "drain_seconds": 45, "admin_drain_seconds": 300 },
+  "models": {
+    "strata": {
+      "aliases": ["qwen", "iq3_s", "qwen3.8-flash-next-iq3_s"],
+      "send_model": "strata",
+      "base": "http://127.0.0.1:8082",
+      "ready_path": "/health",
+      "ready_json": { "loaded": true },
+      "start": ["cmd", "/c", "examples\\strata-8082.bat"],
+      "start_timeout_s": 900,
+      "stop_timeout_s": 120,
+      "stragglers": ["strata.exe"]
+    },
+    "coder390": {
+      "aliases": ["coder", "ninfer", "dflash"],
+      "send_model": "coder390",
+      "base": "http://127.0.0.1:8081",
+      "ready_path": "/health",
+      "ready_json": null,
+      "effort_map": { "minimal": "low", "high": "xhigh", "max": "xhigh" },
+      "strip_rejected": true,
+      "start": ["cmd", "/c", "examples\\ninfer-DFlash.cmd"],
+      "start_timeout_s": 900,
+      "stop_timeout_s": 120,
+      "stragglers": ["ninfer-serve.exe"]
+    }
+  }
+}

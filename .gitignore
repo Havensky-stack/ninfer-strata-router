@@ -1,0 +1,18 @@
+# the working config holds API keys; ship router.example.json instead
+router.json
+
+# runtime output
+*.log
+*.err
+*.part
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# editors
+.vscode/
+.idea/
+*.swp
