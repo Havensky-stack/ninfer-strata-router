@@ -129,5 +129,30 @@ class ResolveTests(unittest.TestCase):
         self.assertIsNone(ROUTER.resolve_model("no-such-model"))
 
 
+class AdminSwitchTests(unittest.TestCase):
+    def tearDown(self):
+        for name in ("strata", "coder390"):
+            for _ in range(4):
+                ROUTER.release_admin_switch(name)
+
+    def test_second_admin_model_is_turned_away(self):
+        self.assertIsNone(ROUTER.claim_admin_switch("coder390"))
+        self.assertEqual(ROUTER.claim_admin_switch("strata"), "coder390")
+        self.assertEqual(ROUTER.admin_switch_owner(), "coder390")
+
+    def test_same_model_may_queue(self):
+        self.assertIsNone(ROUTER.claim_admin_switch("coder390"))
+        self.assertIsNone(ROUTER.claim_admin_switch("coder390"))
+        ROUTER.release_admin_switch("coder390")
+        self.assertEqual(ROUTER.admin_switch_owner(), "coder390")
+        ROUTER.release_admin_switch("coder390")
+        self.assertIsNone(ROUTER.admin_switch_owner())
+
+    def test_other_model_may_go_after_release(self):
+        self.assertIsNone(ROUTER.claim_admin_switch("coder390"))
+        ROUTER.release_admin_switch("coder390")
+        self.assertIsNone(ROUTER.claim_admin_switch("strata"))
+
+
 if __name__ == "__main__":
     unittest.main()

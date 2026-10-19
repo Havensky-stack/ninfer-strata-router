@@ -192,6 +192,41 @@ def admin_wanted():
         return sorted(m for m, n in ADMIN_WANTS.items() if n > 0)
 
 
+# Two admin requests for different models would otherwise wait for each other: each one
+# counts as in flight, and each one waits for the other to drain.  Only the first admin
+# request may enter the load/switch path; a request for the other model gets a clear 503
+# and retries after that model is up.  Requests for the same model may still queue.
+ADMIN_SWITCH_LOCK = threading.Lock()
+ADMIN_SWITCH = {"model": None, "count": 0, "since": None}
+
+
+def claim_admin_switch(name):
+    """The model another admin request is already bringing up, or None if this may go."""
+    with ADMIN_SWITCH_LOCK:
+        owner = ADMIN_SWITCH["model"]
+        if owner and owner != name:
+            return owner
+        if not owner:
+            ADMIN_SWITCH["model"] = name
+            ADMIN_SWITCH["since"] = time.time()
+        ADMIN_SWITCH["count"] += 1
+        return None
+
+
+def release_admin_switch(name):
+    with ADMIN_SWITCH_LOCK:
+        if ADMIN_SWITCH["model"] == name:
+            ADMIN_SWITCH["count"] = max(0, ADMIN_SWITCH["count"] - 1)
+            if not ADMIN_SWITCH["count"]:
+                ADMIN_SWITCH["model"] = None
+                ADMIN_SWITCH["since"] = None
+
+
+def admin_switch_owner():
+    with ADMIN_SWITCH_LOCK:
+        return ADMIN_SWITCH["model"]
+
+
 class RateLimiter:
     """A token bucket per API key.  requests_per_minute <= 0 disables the limiter."""
 
@@ -1002,6 +1037,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _admin_contention(self, model, owner, retry_after):
+        """503: another admin is already loading a different model."""
+        payload = {"error": {
+            "message": "another admin request is already bringing up %s; the %s request "
+                       "was not queued. Retry in about %d s."
+                       % (owner, model, int(retry_after)),
+            "type": "router_busy", "code": "admin_contention"}}
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(503)
+        self.send_header("Retry-After", str(int(max(1, retry_after))))
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _forbidden(self, path):
         """403: the key is valid but this control endpoint needs an admin key."""
         payload = {"error": {
@@ -1083,20 +1133,34 @@ class Handler(BaseHTTPRequestHandler):
                 return self._busy(name, "it is being taken down to make room for the other "
                                         "model", 5)
             counted = False
-            if not self.is_admin:          # an admin request is never refused for load
-                if not INFLIGHT.acquire(blocking=False):
-                    return self._json(503, {"error": {
-                        "message": "too many requests in flight (%d); try again shortly"
-                                   % MAX_INFLIGHT,
-                        "type": "router_busy", "code": "too_many_requests"}})
-                counted = True
-            reserve(name)
+            claimed = False
             if self.is_admin:
-                admin_wants(name, True)       # nothing normal joins this model's queue
+                owner = claim_admin_switch(name)
+                if owner:
+                    log("503 %s %s from %s (another admin request is bringing up %s)"
+                        % (method, path, self.client_address[0], owner))
+                    return self._admin_contention(name, owner, 10)
+                claimed = True
             try:
+                if not self.is_admin:      # an admin request is never refused for load
+                    if not INFLIGHT.acquire(blocking=False):
+                        return self._json(503, {"error": {
+                            "message": "too many requests in flight (%d); try again shortly"
+                                       % MAX_INFLIGHT,
+                            "type": "router_busy", "code": "too_many_requests"}})
+                    counted = True
+                reserve(name)
+                if self.is_admin:
+                    admin_wants(name, True)   # nothing normal joins this model's queue
                 log("%s %s -> %s from %s%s" % (method, path, name, self.client_address[0],
                                                " (admin)" if self.is_admin else ""))
-                ok, detail = ensure(name, "%s %s" % (method, path), admin=self.is_admin)
+                try:
+                    ok, detail = ensure(name, "%s %s" % (method, path),
+                                        admin=self.is_admin)
+                finally:
+                    if claimed:           # the switch is over; another admin may try now
+                        release_admin_switch(name)
+                        claimed = False
                 if not ok:
                     return self._failed(name, detail)
                 self._forward(method, path, body, name)
@@ -1108,6 +1172,8 @@ class Handler(BaseHTTPRequestHandler):
                     admin_wants(name, False)
                 if counted:
                     INFLIGHT.release()
+                if claimed:
+                    release_admin_switch(name)
         except (BrokenPipeError, ConnectionResetError):
             pass
         except TooLarge as exc:
@@ -1161,6 +1227,7 @@ class Handler(BaseHTTPRequestHandler):
                          "listen": CFG["listen"], "models": self._state_map(),
                          "in_flight": dict(INFLIGHT_BY_MODEL),
                          "admin_priority": admin_wanted(),
+                         "admin_switch": admin_switch_owner(),
                          "limits": {"max_inflight": MAX_INFLIGHT,
                                     "max_body_bytes": MAX_BODY,
                                     "requests_per_minute": RATE_PER_MIN,
