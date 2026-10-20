@@ -10,6 +10,7 @@
   "limits": {
     "max_body_bytes": 33554432,
     "max_inflight": 16,
+    "normal_inflight_during_admin": 2,
     "rate_limit": { "requests_per_minute": 60, "burst": 10 }
   },
   "switch": { "drain_seconds": 45, "admin_drain_seconds": 300 },

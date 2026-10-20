@@ -57,12 +57,14 @@ Qwen3.8 27B Coder390。
 **并发与优先级**
 
 - `max_inflight`:同时在飞的请求上限,超出返回 `503`。
+- `normal_inflight_during_admin`:管理员请求期间,同一模型仍允许进入的普通请求数,默认 `2`。
+  只在该模型只有一条管理员请求时生效;设为 `0` 可完全熔断。可在 `models.<名称>` 下按模型覆盖。
 - 同一模型内后端仍是一次一个请求,多出来的在模型内部排队。
 - **切换前排空**:要切走一个模型时,先等它正在写的回答结束(默认 45 秒)。等不到就返回
   `503 + Retry-After`,而不是把别人的回答掐断。
 - **管理员优先**:管理员 key 不受限速与并发上限约束;切换时窗口更长(默认 300 秒),到点后
-  强制接管;管理员请求等待期间,该模型对新来的普通请求**熔断**(`503 admin_priority`),
-  避免管理员排在一条不断变长的队尾。
+  强制接管。管理员请求等待期间,普通请求默认最多再进入 2 条同模型请求;超过配额返回
+  `503 admin_priority`,避免管理员排在一条不断变长的队尾。
 
 **鉴权与限速**
 
@@ -270,7 +272,7 @@ curl -N http://127.0.0.1:8090/v1/responses \
 | `POST /v1/completions`、`/v1/messages/count_tokens`、`/v1/responses/input_tokens` … | 原样转发 |
 | `GET /v1/models` | 路由自己回答,列出全部模型及各自状态 |
 | `GET /health` | 存活探测(免鉴权,只回状态) |
-| `GET /router/status` | 每个模型的状态、PID、端口、在飞请求数、管理员占位、显存、日志尾部 |
+| `GET /router/status` | 每个模型的状态、PID、端口、总在飞请求数、普通请求数、管理员占位、显存、日志尾部 |
 | `GET /router/metrics` **(admin)** | token 用量与解码速度统计 |
 | `POST /router/load` **(admin)** | 预先加载某个模型,body `{"model":"coder390"}` |
 | `POST /router/unload` **(admin)** | 停掉模型释放显卡,body `{"model":"coder390"}` 或 `{"model":"all"}` |

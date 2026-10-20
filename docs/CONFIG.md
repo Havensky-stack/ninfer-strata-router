@@ -40,8 +40,9 @@ x-api-key: <key>
 - 不参与按 key 限速(永远不会 429)。
 - 不占 `max_inflight` 名额(不会因为并发满是 503)。
 - 切换模型时使用更长的排空窗口(`switch.admin_drain_seconds`),到点后**强制接管**。
-- 管理员请求等待期间,目标模型对新来的普通请求熔断,返回 `503`(`code: admin_priority`),
-  这样管理员不会排在一条不断变长的队尾。
+- 管理员请求等待期间,目标模型最多再接纳 `normal_inflight_during_admin` 个普通 key 请求
+  (默认 2);超过配额的新普通请求返回 `503`(`code: admin_priority`)。该配额只在目标模型
+  只有 **1 条**管理员请求时生效;同时有多条管理员请求时,普通请求全部熔断。
 - 两条管理员请求同时要求**不同**模型时,先到的那条进入加载/切换流程,后到的立即收到
   `503 admin_contention` 与 `Retry-After`;等第一个模型就绪后重试即可。这样两条管理员请求
   不会互相等待对方排空。同一模型的管理员请求仍可正常排队。
@@ -56,8 +57,12 @@ x-api-key: <key>
 | --- | --- | --- | --- |
 | `max_body_bytes` | int | `33554432`(32 MiB) | 请求体上限,超出返回 `413`。 |
 | `max_inflight` | int | `16` | 同时在处理的请求上限,超出返回 `503`(管理员不占名额)。 |
+| `normal_inflight_during_admin` | int | `2` | 管理员请求期间,同一模型还允许进入多少个普通 key 请求;设为 `0` 可完全熔断。 |
 | `rate_limit.requests_per_minute` | number | `0`(关闭) | 每个 key 每分钟的请求数。 |
 | `rate_limit.burst` | number | `10` | 令牌桶容量,即瞬时允许的突发请求数。 |
+
+普通请求的准入顺序是:按 key 限速 → 全局 `max_inflight` → 管理员期间的同模型配额。
+该配额控制“进入路由并等待后端”的普通请求数;后端仍按自己的并发槽位排队。
 
 限速采用令牌桶:以 `requests_per_minute / 60` 每秒补充,最多攒到 `burst` 个。
 例如 60/10 表示"瞬时最多 10 个,之后约 1 个/秒"。超出返回 `429`,带 `Retry-After`。
@@ -95,6 +100,7 @@ x-api-key: <key>
 | `stragglers` | string[] | `[]` | 后端引擎可能比"占端口的进程"活得更久(例如 Strata 的 server 会把引擎脱离出去)。这里列出它的可执行文件名,停止时和路由启动时会按 GPU 上的进程把残留清掉。 |
 | `effort_map` | object | `{}` | 推理档位名的映射,例如 `{"minimal":"low","high":"xhigh","max":"xhigh"}`。只对配置了它的模型生效。 |
 | `strip_rejected` | bool | `false` | 打开"后端拒绝哪个字段就处理哪个"的兼容层,详见 [PROTOCOLS.md](PROTOCOLS.md)。 |
+| `normal_inflight_during_admin` | int | 继承 `limits` | 按模型覆盖管理员请求期间的普通请求配额。 |
 
 ### 一个后端项的完整例子
 

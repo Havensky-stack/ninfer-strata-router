@@ -125,6 +125,7 @@ LIMITS = CFG.get("limits") or {}
 MAX_BODY = int(LIMITS.get("max_body_bytes") or (32 << 20))
 MAX_INFLIGHT = int(LIMITS.get("max_inflight") or 16)
 INFLIGHT = threading.BoundedSemaphore(MAX_INFLIGHT)
+NORMAL_INFLIGHT_DURING_ADMIN = int(LIMITS.get("normal_inflight_during_admin", 2))
 
 # Rate limit: one token bucket per presented API key.  0 requests/minute turns it off.
 _RATE = LIMITS.get("rate_limit") or {}
@@ -155,6 +156,7 @@ class Busy(Exception):
 
 COUNT_LOCK = threading.Lock()
 INFLIGHT_BY_MODEL = {name: 0 for name in MODELS}
+NORMAL_INFLIGHT_BY_MODEL = {name: 0 for name in MODELS}
 
 
 def busy_models(exclude=None):
@@ -173,17 +175,49 @@ def release_model(name):
         INFLIGHT_BY_MODEL[name] = max(0, INFLIGHT_BY_MODEL[name] - 1)
 
 
+def normal_limit(name):
+    """How many normal requests may share this model while one admin is waiting."""
+    return max(0, int(MODELS[name].get("normal_inflight_during_admin",
+                                       NORMAL_INFLIGHT_DURING_ADMIN)))
+
+
+def admit_normal(name):
+    """(allowed, limit) and reserve a normal slot, atomically with admin marking."""
+    with ADMISSION_LOCK:
+        with ADMIN_LOCK:
+            admin_count = ADMIN_WANTS.get(name, 0)
+        limit = normal_limit(name)
+        if admin_count > 1:
+            return False, 0
+        if admin_count == 1 and NORMAL_INFLIGHT_BY_MODEL[name] >= limit:
+            return False, limit
+        NORMAL_INFLIGHT_BY_MODEL[name] += 1
+        return True, limit
+
+
+def release_normal(name):
+    with ADMISSION_LOCK:
+        NORMAL_INFLIGHT_BY_MODEL[name] = max(0, NORMAL_INFLIGHT_BY_MODEL[name] - 1)
+
+
+def normal_inflight(name):
+    with ADMISSION_LOCK:
+        return NORMAL_INFLIGHT_BY_MODEL.get(name, 0)
+
+
 # An admin request must not end up behind a queue that keeps growing, so the models it
 # needs (the one it is asking for, and the ones that have to drain first) are marked here
 # while it waits.  New normal-key requests for a marked model are refused instead of
 # joining the queue.
 ADMIN_LOCK = threading.Lock()
 ADMIN_WANTS = {name: 0 for name in MODELS}
+ADMISSION_LOCK = threading.Lock()
 
 
 def admin_wants(name, on=True):
-    with ADMIN_LOCK:
-        ADMIN_WANTS[name] = max(0, ADMIN_WANTS.get(name, 0) + (1 if on else -1))
+    with ADMISSION_LOCK:
+        with ADMIN_LOCK:
+            ADMIN_WANTS[name] = max(0, ADMIN_WANTS.get(name, 0) + (1 if on else -1))
 
 
 def admin_wanted():
@@ -1123,16 +1157,13 @@ class Handler(BaseHTTPRequestHandler):
                     log("429 %s %s from %s (rate limit, retry in %.0fs)"
                         % (method, path, self.client_address[0], wait))
                     return self._too_many(wait)
-                if name in admin_wanted():        # keep the queue clear for the admin
-                    log("503 %s %s from %s (an admin request needs %s, load shed)"
-                        % (method, path, self.client_address[0], name))
-                    return self._admin_priority(name, 5)
             with ST_LOCK:
                 state = STATE[name]["state"]
             if state == "stopping":
                 return self._busy(name, "it is being taken down to make room for the other "
                                         "model", 5)
             counted = False
+            normal_counted = False
             claimed = False
             if self.is_admin:
                 owner = claim_admin_switch(name)
@@ -1149,6 +1180,14 @@ class Handler(BaseHTTPRequestHandler):
                                        % MAX_INFLIGHT,
                             "type": "router_busy", "code": "too_many_requests"}})
                     counted = True
+                    allowed, limit = admit_normal(name)
+                    if not allowed:
+                        INFLIGHT.release()
+                        counted = False
+                        log("503 %s %s from %s (normal allowance %d while an admin needs %s)"
+                            % (method, path, self.client_address[0], limit, name))
+                        return self._admin_priority(name, 5)
+                    normal_counted = True
                 reserve(name)
                 if self.is_admin:
                     admin_wants(name, True)   # nothing normal joins this model's queue
@@ -1167,6 +1206,8 @@ class Handler(BaseHTTPRequestHandler):
             except Busy as exc:
                 return self._busy(exc.model, str(exc), exc.retry_after)
             finally:
+                if normal_counted:
+                    release_normal(name)
                 release_model(name)
                 if self.is_admin:
                     admin_wants(name, False)
@@ -1226,9 +1267,11 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"service": "model-router", "default_model": DEFAULT,
                          "listen": CFG["listen"], "models": self._state_map(),
                          "in_flight": dict(INFLIGHT_BY_MODEL),
+                         "normal_in_flight": {name: normal_inflight(name) for name in MODELS},
                          "admin_priority": admin_wanted(),
                          "admin_switch": admin_switch_owner(),
                          "limits": {"max_inflight": MAX_INFLIGHT,
+                                    "normal_inflight_during_admin": NORMAL_INFLIGHT_DURING_ADMIN,
                                     "max_body_bytes": MAX_BODY,
                                     "requests_per_minute": RATE_PER_MIN,
                                     "burst": RATE_BURST,

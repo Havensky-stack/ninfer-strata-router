@@ -154,5 +154,46 @@ class AdminSwitchTests(unittest.TestCase):
         self.assertIsNone(ROUTER.claim_admin_switch("strata"))
 
 
+class NormalAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        for name in ROUTER.MODELS:
+            ROUTER.ADMIN_WANTS[name] = 0
+            ROUTER.NORMAL_INFLIGHT_BY_MODEL[name] = 0
+
+    def tearDown(self):
+        self.setUp()
+
+    def test_one_admin_allows_two_normal_requests(self):
+        ROUTER.admin_wants("coder390", True)
+        self.assertEqual(ROUTER.admit_normal("coder390"), (True, 2))
+        self.assertEqual(ROUTER.admit_normal("coder390"), (True, 2))
+        self.assertEqual(ROUTER.admit_normal("coder390"), (False, 2))
+        ROUTER.release_normal("coder390")
+        self.assertEqual(ROUTER.admit_normal("coder390"), (True, 2))
+
+    def test_two_admins_close_normal_admission(self):
+        ROUTER.admin_wants("coder390", True)
+        ROUTER.admin_wants("coder390", True)
+        self.assertEqual(ROUTER.admit_normal("coder390"), (False, 0))
+
+    def test_normal_requests_are_unlimited_without_admin_wait(self):
+        for _ in range(5):
+            self.assertTrue(ROUTER.admit_normal("coder390")[0])
+
+    def test_per_model_override(self):
+        model = ROUTER.MODELS["coder390"]
+        old = model.get("normal_inflight_during_admin")
+        model["normal_inflight_during_admin"] = 1
+        try:
+            ROUTER.admin_wants("coder390", True)
+            self.assertEqual(ROUTER.admit_normal("coder390"), (True, 1))
+            self.assertEqual(ROUTER.admit_normal("coder390"), (False, 1))
+        finally:
+            if old is None:
+                model.pop("normal_inflight_during_admin", None)
+            else:
+                model["normal_inflight_during_admin"] = old
+
+
 if __name__ == "__main__":
     unittest.main()
