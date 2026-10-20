@@ -4,6 +4,10 @@
   "auth": {
     "keys": ["replace-with-a-long-random-key", "replace-with-a-second-admin-key"],
     "admin_keys": ["replace-with-a-second-admin-key"],
+    "key_names": {
+      "replace-with-a-long-random-key": "local-user",
+      "replace-with-a-second-admin-key": "admin"
+    },
     "admin_only_paths": ["/router/load", "/router/unload", "/router/metrics"],
     "exempt_paths": ["/health", "/router/health"]
   },

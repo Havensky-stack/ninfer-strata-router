@@ -195,5 +195,32 @@ class NormalAdmissionTests(unittest.TestCase):
                 model["normal_inflight_during_admin"] = old
 
 
+class KeyNameTests(unittest.TestCase):
+    def test_named_key_uses_configured_label(self):
+        self.assertEqual(
+            ROUTER.key_label("replace-with-a-long-random-key"),
+            "local-user",
+        )
+
+    def test_unnamed_key_falls_back_to_hash(self):
+        label = ROUTER.key_label("a-key-with-no-name")
+        self.assertEqual(len(label), 8)
+        self.assertNotIn("a-key-with-no-name", label)
+
+    def test_usage_line_contains_user_label(self):
+        line = ROUTER.usage_line({
+            "model": "coder390",
+            "path": "/v1/responses",
+            "key": "local-user",
+            "status": 200,
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "output_tok_per_s": 10.0,
+            "ttft_ms": 20,
+            "duration_ms": 500,
+        })
+        self.assertIn("local-user", line)
+
+
 if __name__ == "__main__":
     unittest.main()

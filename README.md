@@ -69,13 +69,15 @@ Qwen3.8 27B Coder390。
 **鉴权与限速**
 
 - 多个 API key,`Authorization: Bearer <key>` 或 `x-api-key: <key>` 都可以。
+- `auth.key_names` 可以给 key 绑定用户名;终端请求日志和用量汇总显示用户名,未命名的 key
+  回退到短哈希。
 - 按 key 的令牌桶限速,超出返回 `429 + Retry-After`,`requests_per_minute: 0` 可关闭。
 - `admin_keys` 免限速、免并发上限;`admin_only_paths` 里的控制接口只对管理员开放。
 - 只有健康检查路径免鉴权,其余**一律**要求 key——包括来自本机的请求。
 
 **可观测性**
 
-- 每个请求结束在路由窗口打印一行:模型、路径、状态码、输入/输出 token、解码速度、首字节延迟、总耗时。
+- 每个请求结束在路由窗口打印一行:模型、路径、用户、状态码、输入/输出 token、解码速度、首字节延迟、总耗时。
 - 每分钟一条累计汇总(只有发生新请求时才打印)。
 - `GET /router/metrics` 返回 JSON:总量、按模型、按 key、最近 20 条明细。
 
@@ -325,7 +327,7 @@ curl -N http://127.0.0.1:8090/v1/responses \
 - `wall_tok_per_s` —— `completion_tokens ÷ 总耗时`,含读 prompt 的时间,所有请求都有。
 - `timed_completion_tokens` / `generation_ms` —— 只有"确实测到解码时间"的那些请求的累计值;
   聚合速度用它俩相除,避免把非流式的 token 除以流式的时长。
-- `by_key` 里的标签是 key 的 **SHA-256 前 8 位**,不会出现 key 本身。
+- `by_key` 优先使用 `auth.key_names` 里的用户名;未命名的 key 才使用 **SHA-256 前 8 位**。
 
 计数在内存里,重启路由会归零;`recent` 只保留最近 20 条。
 

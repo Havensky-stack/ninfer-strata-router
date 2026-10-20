@@ -25,8 +25,22 @@
 | --- | --- | --- | --- |
 | `keys` | string[] | `[]` | 所有合法的 API key。空数组表示关闭鉴权。 |
 | `admin_keys` | string[] | `[]` | 管理员 key,应当是 `keys` 的子集。 |
+| `key_names` | object | `{}` | 把 key 映射成终端和 metrics 中显示的用户名;不改变权限。 |
 | `admin_only_paths` | string[] | `["/router/load","/router/unload"]` | 只对管理员开放的路径。样例配置把 `/router/metrics` 也加进去了。 |
 | `exempt_paths` | string[] | `["/health","/router/health"]` | 免鉴权路径,只回状态,不含内部信息。 |
+
+`key_names` 的例子:
+
+```json
+"key_names": {
+  "<key-for-user-a>": "User A",
+  "<key-for-user-b>": "User B",
+  "<admin-key>": "Admin"
+}
+```
+
+请求日志会显示 `(User A)`;`/router/metrics` 的 `by_key` 使用同一个名字。未命名的
+key 仍显示 SHA-256 前 8 位,不会暴露原始 key。
 
 客户端提交 key 的两种方式都支持:
 

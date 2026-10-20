@@ -117,6 +117,8 @@ STATE = {name: {"state": "stopped", "detail": "", "since": None, "pids": []}
 AUTH = CFG.get("auth") or {}
 AUTH_KEYS = [k for k in (AUTH.get("keys") or []) if k]
 AUTH_ADMIN_KEYS = [k for k in (AUTH.get("admin_keys") or []) if k]
+AUTH_KEY_NAMES = {str(k): str(v) for k, v in (AUTH.get("key_names") or {}).items()
+                  if k and v}
 AUTH_EXEMPT = set(AUTH.get("exempt_paths") or ["/health", "/router/health"])
 # Control endpoints that start and stop models: an admin key only.
 ADMIN_ONLY_PATHS = set(AUTH.get("admin_only_paths") or ["/router/load", "/router/unload"])
@@ -322,8 +324,8 @@ def usage_line(entry):
     def count(value):
         return "-" if value is None else str(value)
 
-    return ("[usage] %-9s %-14s %s  %s in / %s out  %s  ttft %s  total %dms"
-            % (entry["model"], entry["path"], entry["status"],
+    return ("[usage] %-9s %-14s %-12s %s  %s in / %s out  %s  ttft %s  total %dms"
+            % (entry["model"], entry["path"], entry["key"], entry["status"],
                count(entry["prompt_tokens"]), count(entry["completion_tokens"]),
                "%.1f tok/s" % entry["output_tok_per_s"]
                if entry["output_tok_per_s"] is not None else "     - tok/s",
@@ -351,9 +353,11 @@ def usage_beat(interval=60.0):
 
 
 def key_label(key):
-    """A short stable name for a key, so /router/metrics never prints the key itself."""
+    """A configured user name, or a short stable key hash when unnamed."""
     if not key or key == "-":
         return "anonymous"
+    if key in AUTH_KEY_NAMES:
+        return AUTH_KEY_NAMES[key]
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
 
 
@@ -1191,8 +1195,12 @@ class Handler(BaseHTTPRequestHandler):
                 reserve(name)
                 if self.is_admin:
                     admin_wants(name, True)   # nothing normal joins this model's queue
-                log("%s %s -> %s from %s%s" % (method, path, name, self.client_address[0],
-                                               " (admin)" if self.is_admin else ""))
+                identity = key_label(self.presented_key)
+                tags = ([identity] if identity != "anonymous" else []) + \
+                       (["admin"] if self.is_admin else [])
+                suffix = " (%s)" % ", ".join(tags) if tags else ""
+                log("%s %s -> %s from %s%s" % (method, path, name,
+                                               self.client_address[0], suffix))
                 try:
                     ok, detail = ensure(name, "%s %s" % (method, path),
                                         admin=self.is_admin)
@@ -1432,6 +1440,9 @@ def main():
     log("  auth: %s%s" % ("one of %d API key(s)" % len(AUTH_KEYS) if AUTH_KEYS else "OFF",
                           " - exempt: %s" % ", ".join(sorted(AUTH_EXEMPT))
                           if AUTH_KEYS else ""))
+    named = sorted({AUTH_KEY_NAMES[k] for k in AUTH_KEYS if k in AUTH_KEY_NAMES})
+    if named:
+        log("  users: %s" % ", ".join(named))
     log("  closing this window stops the router and every model it started")
     if make_job() is None:
         log("  WARNING: no job object - a model started here would survive the router")
