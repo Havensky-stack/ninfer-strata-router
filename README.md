@@ -351,6 +351,16 @@ curl -N http://127.0.0.1:8090/v1/responses \
 最小可用的配置见 [router.example.json](router.example.json),每一项的含义、默认值与取值见
 [docs/CONFIG.md](docs/CONFIG.md)。改完配置需要**重启路由**(配置只在启动时读取)。
 
+## Codex Desktop 本地模型工具缺失
+
+用自定义 provider 调用本地模型时,Codex 新线程可能没有
+`load_workspace_dependencies`,导致演示文稿、文档、表格技能无法定位
+`@oai/artifact-tool`。这是客户端的动态工具注入问题,路由本身仍会正常转发模型请求。
+
+仓库提供了经过实测的兜底:全局 `AGENTS.md` 加一个读取运行时路径的小脚本。模型发现该工具
+不存在时,会直接运行脚本取得 Node.js 与 `node_modules` 路径。安装步骤、官方 issue 链接和
+可选的模型目录配置见 [docs/CODEX_DESKTOP.md](docs/CODEX_DESKTOP.md)。
+
 ---
 
 ## 安全
@@ -406,10 +416,14 @@ ninfer-strata-router/
 ├── run-router.bat               # 启动入口
 ├── examples/
 │   ├── strata-8082.bat          # Strata 后端的启动模板
-│   └── ninfer-DFlash.cmd        # NInfer 后端的启动模板
+│   ├── ninfer-DFlash.cmd        # NInfer 后端的启动模板
+│   └── codex/
+│       ├── AGENTS.md            # Codex 全局兜底指令模板
+│       └── workspace-deps-mcp.py # 运行时路径读取 / MCP 服务
 ├── docs/
 │   ├── CONFIG.md                # 配置项参考
-│   └── PROTOCOLS.md             # 协议兼容层说明
+│   ├── PROTOCOLS.md             # 协议兼容层说明
+│   └── CODEX_DESKTOP.md         # 本地模型的 Codex 工具缺失兜底
 └── tests/
     └── test_router.py           # 路径、档位、字段与工具兼容的单元测试
 ```
