@@ -434,10 +434,29 @@ class UsageSniffer:
     def __init__(self):
         self.first_token = None
         self.buffer = b""
+        self.timing_buffer = b""
 
     def feed(self, chunk):
         if self.first_token is None and chunk:
-            self.first_token = time.time()
+            self.timing_buffer += chunk
+            while b"\n" in self.timing_buffer:
+                line, self.timing_buffer = self.timing_buffer.split(b"\n", 1)
+                payload = line.strip()
+                if not payload.startswith(b"data:"):
+                    continue
+                payload = payload[5:].strip()
+                if not payload or payload == b"[DONE]":
+                    continue
+                try:
+                    event = json.loads(payload)
+                except ValueError:
+                    continue
+                if starts_output(event):
+                    self.first_token = time.time()
+                    self.timing_buffer = b""
+                    break
+            if len(self.timing_buffer) > USAGE_BUFFER_MAX:
+                self.timing_buffer = self.timing_buffer[-USAGE_BUFFER_MAX:]
         if len(self.buffer) < USAGE_BUFFER_MAX:
             self.buffer += chunk[:USAGE_BUFFER_MAX - len(self.buffer)]
 
@@ -469,6 +488,48 @@ class UsageSniffer:
                 if found[1] is not None:
                     completion = found[1]
         return prompt, completion
+
+
+def has_output_payload(value):
+    """True when an SSE field contains generated text/tool data, not just metadata."""
+    if isinstance(value, str):
+        return bool(value)
+    if isinstance(value, dict):
+        metadata = {"type", "role", "index", "id", "object", "status", "sequence_number"}
+        return any(has_output_payload(item) for key, item in value.items()
+                   if key not in metadata)
+    if isinstance(value, list):
+        return any(has_output_payload(item) for item in value)
+    return False
+
+
+def starts_output(event):
+    """Whether an SSE event contains the first generated token or tool-call fragment.
+
+    Chat Completions may send a role-only first delta, and the Responses and Anthropic
+    protocols send lifecycle events such as response.created or message_start before
+    prompt processing finishes.  Those events used to be counted as the first token,
+    which mixed prompt prefill time into the reported decode speed.
+    """
+    if not isinstance(event, dict):
+        return False
+
+    for choice in event.get("choices") or ():
+        if not isinstance(choice, dict):
+            continue
+        if has_output_payload(choice.get("text")):
+            return True
+        if has_output_payload(choice.get("delta")):
+            return True
+
+    event_type = event.get("type")
+    if isinstance(event_type, str) and event_type.endswith(".delta"):
+        return has_output_payload(event.get("delta"))
+    if event_type == "content_block_delta":
+        return has_output_payload(event.get("delta"))
+    if event_type == "content_block_start":
+        return has_output_payload(event.get("content_block"))
+    return False
 
 
 def http_get(url, timeout=5.0):

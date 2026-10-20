@@ -222,5 +222,56 @@ class KeyNameTests(unittest.TestCase):
         self.assertIn("local-user", line)
 
 
+class UsageTimingTests(unittest.TestCase):
+    def feed_sse(self, *events):
+        sniffer = ROUTER.UsageSniffer()
+        for event in events:
+            data = event if isinstance(event, bytes) else json.dumps(event).encode()
+            sniffer.feed(b"data: " + data + b"\n\n")
+        return sniffer
+
+    def test_responses_lifecycle_event_does_not_start_decode_timer(self):
+        sniffer = self.feed_sse({
+            "type": "response.created",
+            "response": {"id": "resp_1", "status": "in_progress", "output": []},
+        })
+        self.assertIsNone(sniffer.first_token)
+
+    def test_responses_text_delta_starts_decode_timer(self):
+        sniffer = self.feed_sse(
+            {"type": "response.created", "response": {"id": "resp_1", "output": []}},
+            {"type": "response.output_text.delta", "delta": "hello"},
+        )
+        self.assertIsNotNone(sniffer.first_token)
+
+    def test_chat_role_only_delta_does_not_start_decode_timer(self):
+        sniffer = self.feed_sse({
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}],
+        })
+        self.assertIsNone(sniffer.first_token)
+
+    def test_chat_content_delta_starts_decode_timer(self):
+        sniffer = self.feed_sse(
+            {"choices": [{"index": 0, "delta": {"role": "assistant"}}]},
+            {"choices": [{"index": 0, "delta": {"content": "hello"}}]},
+        )
+        self.assertIsNotNone(sniffer.first_token)
+
+    def test_anthropic_thinking_delta_starts_decode_timer(self):
+        sniffer = self.feed_sse({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "reasoning"},
+        })
+        self.assertIsNotNone(sniffer.first_token)
+
+    def test_split_sse_line_is_buffered_until_complete(self):
+        sniffer = ROUTER.UsageSniffer()
+        sniffer.feed(b'data: {"type":"response.output_text.')
+        self.assertIsNone(sniffer.first_token)
+        sniffer.feed(b'delta","delta":"hello"}\n\n')
+        self.assertIsNotNone(sniffer.first_token)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -322,8 +322,11 @@ curl -N http://127.0.0.1:8090/v1/responses \
 
 字段含义:
 
-- `output_tok_per_s` —— **纯解码速度**:`completion_tokens ÷ (总耗时 − 首字节时间)`。
-  只有**流式**响应能测,非流式为 `null`(响应是生成完才整块返回,没有"首 token"可计时)。
+- `output_tok_per_s` —— **纯解码速度**:
+  `completion_tokens ÷ (总耗时 − 首个有效输出片段的时间)`。路由会跳过
+  `response.created`、`message_start`、只有 `role` 的 Chat Completions 首帧等控制事件,
+  不把 prompt 预填充时间算进解码速度。只有**流式**响应能测,非流式为 `null`
+  (响应是生成完才整块返回,没有"首 token"可计时)。
 - `wall_tok_per_s` —— `completion_tokens ÷ 总耗时`,含读 prompt 的时间,所有请求都有。
 - `timed_completion_tokens` / `generation_ms` —— 只有"确实测到解码时间"的那些请求的累计值;
   聚合速度用它俩相除,避免把非流式的 token 除以流式的时长。
