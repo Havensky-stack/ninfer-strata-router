@@ -55,10 +55,8 @@ x-api-key: <key>
 - 不占 `max_inflight` 名额(不会因为并发满是 503)。
 - 切换模型时使用更长的排空窗口(`switch.admin_drain_seconds`),到点后**强制接管**。
 - 管理员请求等待期间,目标模型最多再接纳 `normal_inflight_during_admin` 个普通 key 请求
-  (默认 0);超过配额的新普通请求返回 `503`(`code: admin_priority`)。该配额只在目标模型
+  (默认 2);超过配额的新普通请求返回 `503`(`code: admin_priority`)。该配额只在目标模型
   只有 **1 条**管理员请求时生效;同时有多条管理员请求时,普通请求全部熔断。
-- 配额为 `0` 时管理员独占目标模型。已经在输出的普通请求会先自然结束,最多等待
-  `switch.admin_drain_seconds`;超时后仍按“管理员优先”继续。
 - 两条管理员请求同时要求**不同**模型时,先到的那条进入加载/切换流程,后到的立即收到
   `503 admin_contention` 与 `Retry-After`;等第一个模型就绪后重试即可。这样两条管理员请求
   不会互相等待对方排空。同一模型的管理员请求仍可正常排队。
@@ -73,7 +71,7 @@ x-api-key: <key>
 | --- | --- | --- | --- |
 | `max_body_bytes` | int | `33554432`(32 MiB) | 请求体上限,超出返回 `413`。 |
 | `max_inflight` | int | `16` | 同时在处理的请求上限,超出返回 `503`(管理员不占名额)。 |
-| `normal_inflight_during_admin` | int | `0` | 管理员请求期间,同一模型还允许进入多少个普通 key 请求;默认 `0` 表示管理员独占。 |
+| `normal_inflight_during_admin` | int | `2` | 管理员请求期间,同一模型还允许进入多少个普通 key 请求;设为 `0` 可完全熔断。 |
 | `rate_limit.requests_per_minute` | number | `0`(关闭) | 每个 key 每分钟的请求数。 |
 | `rate_limit.burst` | number | `10` | 令牌桶容量,即瞬时允许的突发请求数。 |
 
