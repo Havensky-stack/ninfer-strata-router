@@ -127,7 +127,7 @@ LIMITS = CFG.get("limits") or {}
 MAX_BODY = int(LIMITS.get("max_body_bytes") or (32 << 20))
 MAX_INFLIGHT = int(LIMITS.get("max_inflight") or 16)
 INFLIGHT = threading.BoundedSemaphore(MAX_INFLIGHT)
-NORMAL_INFLIGHT_DURING_ADMIN = int(LIMITS.get("normal_inflight_during_admin", 2))
+NORMAL_INFLIGHT_DURING_ADMIN = int(LIMITS.get("normal_inflight_during_admin", 0))
 
 # Rate limit: one token bucket per presented API key.  0 requests/minute turns it off.
 _RATE = LIMITS.get("rate_limit") or {}
@@ -205,6 +205,17 @@ def release_normal(name):
 def normal_inflight(name):
     with ADMISSION_LOCK:
         return NORMAL_INFLIGHT_BY_MODEL.get(name, 0)
+
+
+def wait_for_normal_drain(name, timeout):
+    """Wait for already-running normal requests, while new ones are blocked."""
+    deadline = time.time() + max(0.0, float(timeout))
+    while normal_inflight(name):
+        left = deadline - time.time()
+        if left <= 0:
+            return False
+        time.sleep(min(1.0, left))
+    return True
 
 
 # An admin request must not end up behind a queue that keeps growing, so the models it
@@ -1253,9 +1264,15 @@ class Handler(BaseHTTPRequestHandler):
                             % (method, path, self.client_address[0], limit, name))
                         return self._admin_priority(name, 5)
                     normal_counted = True
-                reserve(name)
                 if self.is_admin:
                     admin_wants(name, True)   # nothing normal joins this model's queue
+                    if normal_limit(name) == 0:
+                        drained = wait_for_normal_drain(name, ADMIN_DRAIN_S)
+                        if not drained:
+                            log("admin priority: %s still has %d normal request(s) after %ds; "
+                                "continuing anyway"
+                                % (name, normal_inflight(name), int(ADMIN_DRAIN_S)))
+                reserve(name)
                 identity = key_label(self.presented_key)
                 tags = ([identity] if identity != "anonymous" else []) + \
                        (["admin"] if self.is_admin else [])

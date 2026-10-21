@@ -163,13 +163,9 @@ class NormalAdmissionTests(unittest.TestCase):
     def tearDown(self):
         self.setUp()
 
-    def test_one_admin_allows_two_normal_requests(self):
+    def test_one_admin_blocks_new_normal_requests(self):
         ROUTER.admin_wants("coder390", True)
-        self.assertEqual(ROUTER.admit_normal("coder390"), (True, 2))
-        self.assertEqual(ROUTER.admit_normal("coder390"), (True, 2))
-        self.assertEqual(ROUTER.admit_normal("coder390"), (False, 2))
-        ROUTER.release_normal("coder390")
-        self.assertEqual(ROUTER.admit_normal("coder390"), (True, 2))
+        self.assertEqual(ROUTER.admit_normal("coder390"), (False, 0))
 
     def test_two_admins_close_normal_admission(self):
         ROUTER.admin_wants("coder390", True)
@@ -189,6 +185,23 @@ class NormalAdmissionTests(unittest.TestCase):
             self.assertEqual(ROUTER.admit_normal("coder390"), (True, 1))
             self.assertEqual(ROUTER.admit_normal("coder390"), (False, 1))
         finally:
+            if old is None:
+                model.pop("normal_inflight_during_admin", None)
+            else:
+                model["normal_inflight_during_admin"] = old
+
+    def test_admin_waits_until_existing_normal_requests_drain(self):
+        model = ROUTER.MODELS["coder390"]
+        old = model.get("normal_inflight_during_admin")
+        model["normal_inflight_during_admin"] = 0
+        try:
+            allowed, _ = ROUTER.admit_normal("coder390")
+            self.assertTrue(allowed)
+            self.assertFalse(ROUTER.wait_for_normal_drain("coder390", 0))
+            ROUTER.release_normal("coder390")
+            self.assertTrue(ROUTER.wait_for_normal_drain("coder390", 0))
+        finally:
+            ROUTER.release_normal("coder390")
             if old is None:
                 model.pop("normal_inflight_during_admin", None)
             else:
